@@ -122,14 +122,12 @@ function parseRequest(){
     if(!raw.startsWith('DAI-REQ-v1.')) throw new Error('Not a DAI-REQ-v1 request code.');
     const req = b64urlToJson(raw.slice('DAI-REQ-v1.'.length));
     if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
-    // prefill the entitlement form from the request
+    // prefill the app from the request; cameras are set by your team, not the customer
     if(req.app) document.getElementById('app').value = req.app;
-    if(req.cams!=null) document.getElementById('cams').value = req.cams;
     setHTML('reqInfo',
       '<div class="muted" style="margin-top:8px;">Request decoded:</div>'+
       '<div style="margin-top:6px;">'+
       '<span class="pill">app: '+(req.app||'?')+'</span>'+
-      '<span class="pill">cams req: '+(req.cams!=null?req.cams:'?')+'</span>'+
       '<span class="pill">nonce: '+(req.nonce||'?')+'</span></div>'+
       '<label>Machine fingerprint</label><div class="out">'+req.fp+'</div>');
     window._req = req;
