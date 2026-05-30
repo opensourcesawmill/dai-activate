@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DAI Activation — Vendor Tool</title>
+<!--
+  Self-contained vendor activation tool for the DAI suite (Automation / Advanced / Asset Intelligence).
+  Runs entirely in the browser - nothing is uploaded anywhere. Works hosted on GitHub Pages or
+  opened as a local file (offline needs the libraries vendored locally; see docs/README.md).
+
+  SECURITY: the private signing seed is NEVER stored in this file or the repo. The vendor pastes it
+  at use time (from a password manager). The apps embed only the PUBLIC key to verify.
+-->
+<!-- Pinned CDN versions for the first working version. Before production, vendor these two
+     files into docs/ (and add Subresource-Integrity hashes) so the tool is tamper-proof and
+     works fully offline. See docs/README.md. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+         background: #121416; color: #f2f4f7; line-height: 1.45; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 18px 16px 60px; }
+  h1 { font-size: 22px; margin: 8px 0 2px; }
+  .sub { color: #9aa4ad; font-size: 13px; margin-bottom: 18px; }
+  .card { background: #1a1d21; border: 1px solid #2a2f35; border-radius: 10px;
+          padding: 16px; margin: 14px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #cbd5e1; letter-spacing: .02em; }
+  label { display: block; font-size: 12px; color: #9aa4ad; margin: 10px 0 4px; }
+  textarea, input, select { width: 100%; background: #0e1012; color: #f2f4f7;
+          border: 1px solid #2a2f35; border-radius: 8px; padding: 10px; font-size: 14px;
+          font-family: ui-monospace, Consolas, monospace; }
+  textarea { resize: vertical; min-height: 64px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 130px; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 8px;
+           padding: 11px 16px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 12px; }
+  button.secondary { background: #2a2f35; }
+  button:active { transform: translateY(1px); }
+  .out { white-space: pre-wrap; word-break: break-all; background: #0e1012; border: 1px solid #2a2f35;
+         border-radius: 8px; padding: 10px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .ok { color: #34d399; } .err { color: #f87171; } .muted { color: #9aa4ad; font-size: 12px; }
+  #reqInfo, #verifyOut { margin-top: 10px; }
+  #qrout { background: #fff; padding: 12px; border-radius: 8px; display: inline-block; margin-top: 12px; }
+  .pill { display:inline-block; background:#2a2f35; border-radius:999px; padding:2px 9px; font-size:12px; margin-right:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DAI Activation — Vendor Tool</h1>
+  <div class="sub">Signs activation tokens for Automation / Advanced / Asset Intelligence. Runs entirely in your browser; nothing is uploaded. Keep your private seed in a password manager.</div>
+
+  <div class="card">
+    <h2>1 · ACTIVATION REQUEST (from the customer)</h2>
+    <label>Paste the request code (<span class="muted">DAI-REQ-v1.…</span>) the customer emailed, or the text from your phone's QR scan:</label>
+    <textarea id="reqInput" placeholder="DAI-REQ-v1.eyJ2Ijox..."></textarea>
+    <button class="secondary" onclick="parseRequest()">Read request</button>
+    <div id="reqInfo"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · ENTITLEMENT (you set this)</h2>
+    <div class="row">
+      <div>
+        <label>App / edition</label>
+        <select id="app">
+          <option value="DAI">Automation Intelligence (DAI)</option>
+          <option value="DAdI">Advanced Intelligence (DAdI)</option>
+          <option value="DAsI">Asset Intelligence (DAsI)</option>
+        </select>
+      </div>
+      <div>
+        <label>Cameras (0–9)</label>
+        <input id="cams" type="number" min="0" max="9" value="1" />
+      </div>
+      <div>
+        <label>Expires (YYYY-MM-DD)</label>
+        <input id="exp" type="date" />
+      </div>
+    </div>
+    <label>Features (comma-separated, optional)</label>
+    <input id="feat" placeholder="e.g. patrol,inspection" />
+  </div>
+
+  <div class="card">
+    <h2>3 · SIGN</h2>
+    <label>Your private seed (base64, 32 bytes — from your password manager). Never stored or sent.</label>
+    <input id="seed" type="password" placeholder="paste private seed" autocomplete="off" />
+    <button onclick="generate()">Generate activation key</button>
+    <div id="genOut"></div>
+    <div id="qrwrap" style="text-align:center;"><div id="qrout" style="display:none;"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>4 · VERIFY (optional self-test)</h2>
+    <label>Public key (base64) — the one embedded in the apps:</label>
+    <input id="pub" value="LJ61ym9AE7cJqexooc9TZoJwsbPFGIgpoiaZmGCWKLg=" />
+    <label>Activation code to check (DAI-ACT-v1.…):</label>
+    <textarea id="verifyIn" placeholder="DAI-ACT-v1.…"></textarea>
+    <button class="secondary" onclick="verify()">Verify signature</button>
+    <div id="verifyOut"></div>
+  </div>
+</div>
+
+<script>
+// ---- base64 / base64url helpers ----
+function b64ToBytes(b64){ const s=atob(b64.replace(/-/g,'+').replace(/_/g,'/')); const a=new Uint8Array(s.length); for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i); return a; }
+function bytesToB64(a){ let s=''; for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]); return btoa(s); }
+function bytesToB64url(a){ return bytesToB64(a).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function strToBytes(s){ return new TextEncoder().encode(s); }
+function jsonToB64url(o){ return bytesToB64url(strToBytes(JSON.stringify(o))); }
+function b64urlToJson(s){ return JSON.parse(new TextDecoder().decode(b64ToBytes(s))); }
+
+function setHTML(id,html){ document.getElementById(id).innerHTML = html; }
+
+// ---- 1. parse request ----
+function parseRequest(){
+  try{
+    let raw = document.getElementById('reqInput').value.trim();
+    if(!raw.startsWith('DAI-REQ-v1.')) throw new Error('Not a DAI-REQ-v1 request code.');
+    const req = b64urlToJson(raw.slice('DAI-REQ-v1.'.length));
+    if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
+    // prefill the entitlement form from the request
+    if(req.app) document.getElementById('app').value = req.app;
+    if(req.cams!=null) document.getElementById('cams').value = req.cams;
+    setHTML('reqInfo',
+      '<div class="muted" style="margin-top:8px;">Request decoded:</div>'+
+      '<div style="margin-top:6px;">'+
+      '<span class="pill">app: '+(req.app||'?')+'</span>'+
+      '<span class="pill">cams req: '+(req.cams!=null?req.cams:'?')+'</span>'+
+      '<span class="pill">nonce: '+(req.nonce||'?')+'</span></div>'+
+      '<label>Machine fingerprint</label><div class="out">'+req.fp+'</div>');
+    window._req = req;
+  }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
+}
+
+// ---- 3. generate (sign) ----
+function generate(){
+  try{
+    if(!window._req || !window._req.fp) throw new Error('Read a valid request first (step 1).');
+    const seedB64 = document.getElementById('seed').value.trim();
+    if(!seedB64) throw new Error('Paste your private seed (step 3).');
+    const seed = b64ToBytes(seedB64);
+    if(seed.length!==32) throw new Error('Private seed must be 32 bytes (base64). Got '+seed.length+'.');
+
+    const cams = parseInt(document.getElementById('cams').value,10);
+    if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
+    const expStr = document.getElementById('exp').value;
+    if(!expStr) throw new Error('Set an expiration date.');
+    const [y,m,d] = expStr.split('-').map(n=>parseInt(n,10));
+    const feats = document.getElementById('feat').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const tidBytes = new Uint8Array(8); crypto.getRandomValues(tidBytes);
+
+    const payload = {
+      v:1,
+      app: document.getElementById('app').value,
+      fp: window._req.fp,
+      cams: cams,
+      exp: [y,m,d],
+      feat: feats,
+      tid: bytesToB64url(tidBytes),
+      iat: expStr  // issued context; real timestamp not used to keep it deterministic/offline
+    };
+    const payloadB64 = jsonToB64url(payload);
+    const kp = nacl.sign.keyPair.fromSeed(seed);
+    const sig = nacl.sign.detached(strToBytes(payloadB64), kp.secretKey);
+    const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(sig);
+
+    setHTML('genOut',
+      '<div class="ok" style="margin-top:10px;">Activation key generated — copy this to the customer:</div>'+
+      '<div class="out" style="margin-top:6px;">'+code+'</div>'+
+      '<button class="secondary" onclick="navigator.clipboard.writeText(\''+code+'\')">Copy code</button>');
+
+    // QR of the activation code
+    const qel = document.getElementById('qrout');
+    qel.style.display='inline-block'; qel.innerHTML='';
+    new QRCode(qel, { text: code, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+  }catch(e){ setHTML('genOut','<div class="err" style="margin-top:10px;">'+e.message+'</div>'); document.getElementById('qrout').style.display='none'; }
+}
+
+// ---- 4. verify ----
+function verify(){
+  try{
+    const pubB64 = document.getElementById('pub').value.trim();
+    const pub = b64ToBytes(pubB64);
+    if(pub.length!==32) throw new Error('Public key must be 32 bytes (base64).');
+    const raw = document.getElementById('verifyIn').value.trim();
+    const parts = raw.split('.');
+    if(parts.length!==3 || parts[0]!=='DAI-ACT-v1') throw new Error('Not a DAI-ACT-v1 activation code.');
+    const payloadB64 = parts[1], sig = b64ToBytes(parts[2]);
+    const ok = nacl.sign.detached.verify(strToBytes(payloadB64), sig, pub);
+    if(!ok){ setHTML('verifyOut','<div class="err" style="margin-top:8px;">✗ Signature INVALID for this public key.</div>'); return; }
+    const p = b64urlToJson(payloadB64);
+    setHTML('verifyOut','<div class="ok" style="margin-top:8px;">✓ Signature valid.</div>'+
+      '<div class="out" style="margin-top:6px;">'+JSON.stringify(p,null,2)+'</div>');
+  }catch(e){ setHTML('verifyOut','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
+}
+</script>
+</body>
+</html>
