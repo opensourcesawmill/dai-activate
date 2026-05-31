@@ -39,12 +39,12 @@
 <div class="wrap">
   <h1>DAI Activation — Vendor Tool</h1>
   <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and send back the activation key. Runs entirely in your browser.</div>
-  <div class="sub">Version: emk3 · 2026-05-31 10:00 PT</div>
+  <div class="sub">Version: emk4 · 2026-05-31 10:15 PT</div>
 
   <div class="card">
     <h2>1 · Paste the customer's request</h2>
-    <label>The <span class="muted">DAI-REQ-v1.…</span> code (from the QR they sent):</label>
-    <textarea id="reqInput" placeholder="DAI-REQ-v1.…"></textarea>
+    <label>The <span class="muted">DAI-REQ-v2.…</span> code (from the QR they sent):</label>
+    <textarea id="reqInput" placeholder="DAI-REQ-v2.…"></textarea>
     <button class="secondary" onclick="parseRequest()">Read request</button>
     <div id="reqInfo"></div>
   </div>
@@ -124,11 +124,12 @@ async function encryptModelKey(publicKeyB64, modelKeyStr){
 function parseRequest(){
   try{
     const raw = document.getElementById('reqInput').value;
-    const marker = 'DAI-REQ-v1.';
+    const marker = 'DAI-REQ-v2.';
     const idx = raw.indexOf(marker);
-    if(idx < 0) throw new Error('No DAI-REQ-v1 request code found in what you pasted.');
+    if(idx < 0) throw new Error('No DAI-REQ-v2 request code found in what you pasted.');
     const req = b64urlToJson(raw.slice(idx + marker.length).trim());
-    if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
+    if(req.v !== 2) throw new Error('Request is from an old licensing version.');
+    if(!req.hw || req.hw.hwv !== 3) throw new Error('Request is missing the v3 hardware binding.');
     if(!req.ek) throw new Error('Request is missing the encryption key. Generate a fresh activation request from the customer app.');
     if(req.app) document.getElementById('app').value = req.app;
     let extraPills = '';
@@ -137,15 +138,16 @@ function parseRequest(){
     setHTML('reqInfo',
       '<div style="margin-top:8px;"><span class="pill">app: '+(req.app||'pick below')+'</span>'+
       '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+
+      '<span class="pill">hardware: v'+req.hw.hwv+'</span>'+
       '<span class="pill">encrypted key: '+(req.ealg||'RSA-OAEP-SHA256')+'</span>'+extraPills+'</div>'+
-      '<label>Machine fingerprint</label><div class="out">'+req.fp+'</div>');
+      '<label>Hardware binding</label><div class="out">'+JSON.stringify(req.hw)+'</div>');
     window._req = req;
   }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
 }
 
 async function generate(){
   try{
-    if(!window._req || !window._req.fp) throw new Error('Read a valid request first (step 1).');
+    if(!window._req || !window._req.hw) throw new Error('Read a valid request first (step 1).');
     const keyStr = document.getElementById('key').value.trim();
     if(!keyStr) throw new Error('Enter the application secret key (step 3).');
     const modelKeyStr = normalizeModelKey(keyStr);
@@ -155,7 +157,7 @@ async function generate(){
     const [y,m,d] = expStr.split('-').map(n=>parseInt(n,10));
     const tidBytes = new Uint8Array(8); crypto.getRandomValues(tidBytes);
 
-    const payload = { v:1, app: app, fp: window._req.fp, exp: [y,m,d], tid: bytesToB64url(tidBytes) };
+    const payload = { v:2, app: app, hw: window._req.hw, exp: [y,m,d], tid: bytesToB64url(tidBytes) };
     if(app === 'DAI'){
       const cams = parseInt(document.getElementById('cams').value,10);
       if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
@@ -168,7 +170,7 @@ async function generate(){
     payload.emk = await encryptModelKey(window._req.ek, modelKeyStr);
     const payloadB64 = jsonToB64url(payload);
     const sig = await ed25519Sign(keyStr, payloadB64);
-    const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(sig);
+    const code = 'DAI-ACT-v2.'+payloadB64+'.'+bytesToB64url(sig);
 
     setHTML('genOut',
       '<div class="ok" style="margin-top:10px;">Activation key — send this to the customer:</div>'+
@@ -204,7 +206,7 @@ function onAppChange(){
   if(hint) hint.textContent = 'Use the ' + (names[app] || app) + ' key.';
 }
 
-// If opened from an in-app QR/link (…?req=DAI-REQ-v1.…), auto-fill and read the request.
+// If opened from an in-app QR/link (…?req=DAI-REQ-v2.…), auto-fill and read the request.
 (function(){
   try{
     const r = new URLSearchParams(location.search).get('req');
