@@ -144,6 +144,18 @@ async function generate(){
     }catch(_){ document.getElementById('qrout').style.display='none'; }
   }catch(e){ setHTML('genOut','<div class="err" style="margin-top:10px;">'+e.message+'</div>'); document.getElementById('qrout').style.display='none'; }
 }
+
+function copyCode(btn){
+  const el = document.getElementById('actCode');
+  if(!el) return;
+  el.focus(); el.select(); el.setSelectionRange(0, el.value.length);
+  const flash = ()=>{ const t=btn.textContent; btn.textContent='Copied!'; setTimeout(()=>{ btn.textContent=t; }, 1200); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(el.value).then(flash).catch(()=>{ try{ document.execCommand('copy'); flash(); }catch(_){} });
+  } else {
+    try{ document.execCommand('copy'); flash(); }catch(_){}
+  }
+}
 </script>
 </body>
 </html>
