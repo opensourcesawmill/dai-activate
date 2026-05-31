@@ -39,6 +39,7 @@
 <div class="wrap">
   <h1>DAI Activation — Vendor Tool</h1>
   <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and send back the activation key. Runs entirely in your browser.</div>
+  <div class="sub">Version: emk2 · 2026-05-31 09:44 PT</div>
 
   <div class="card">
     <h2>1 · Paste the customer's request</h2>
@@ -72,9 +73,11 @@
 
   <div class="card">
     <h2>3 · Secret key → generate</h2>
-    <label>Secret key for the selected application. Never stored or sent.</label>
+    <label>Signing key for the selected application. Never stored or sent.</label>
     <div id="keyHint" class="muted" style="margin:0 0 6px;"></div>
     <input id="key" type="text" placeholder="paste the application's secret key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+    <label>Model/decrypt key. Use the Advanced Intelligence key; base or full key is accepted.</label>
+    <input id="modelKey" type="text" placeholder="paste the Advanced Intelligence/model key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
     <button onclick="generate()">Generate activation key</button>
     <div id="genOut"></div>
     <div style="text-align:center;"><div id="qrout" style="display:none;"></div></div>
@@ -89,6 +92,11 @@ function strToBytes(s){ return new TextEncoder().encode(s); }
 function jsonToB64url(o){ return bytesToB64url(strToBytes(JSON.stringify(o))); }
 function b64urlToJson(s){ return JSON.parse(new TextDecoder().decode(b64ToBytes(s))); }
 function setHTML(id,html){ document.getElementById(id).innerHTML = html; }
+function normalizeModelKey(s){
+  const key = (s || '').trim();
+  if(!key) return '';
+  return key.indexOf('::') >= 0 ? key : key + '::model-addons-v1';
+}
 
 // Sign the payload with the Ed25519 private key derived from the per-app signing
 // password (seed = SHA-256(password)). The deployed app verifies with the matching public
@@ -99,6 +107,22 @@ async function ed25519Sign(passwordStr, msgStr){
   return nacl.sign.detached(strToBytes(msgStr), kp.secretKey);
 }
 
+async function encryptModelKey(publicKeyB64, modelKeyStr){
+  const publicKey = await crypto.subtle.importKey(
+    'spki',
+    b64ToBytes(publicKeyB64),
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    false,
+    ['encrypt']
+  );
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'RSA-OAEP' },
+    publicKey,
+    strToBytes(modelKeyStr)
+  );
+  return bytesToB64url(new Uint8Array(encrypted));
+}
+
 function parseRequest(){
   try{
     const raw = document.getElementById('reqInput').value;
@@ -107,13 +131,15 @@ function parseRequest(){
     if(idx < 0) throw new Error('No DAI-REQ-v1 request code found in what you pasted.');
     const req = b64urlToJson(raw.slice(idx + marker.length).trim());
     if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
+    if(!req.ek) throw new Error('Request is missing the encryption key. Generate a fresh activation request from the customer app.');
     if(req.app) document.getElementById('app').value = req.app;
     let extraPills = '';
     if(req.inst !== undefined) extraPills += '<span class="pill">instance: '+req.inst+'</span>';
     if(req.mid) extraPills += '<span class="pill">model: '+req.mid+' v'+(req.ver||'?')+'</span>';
     setHTML('reqInfo',
       '<div style="margin-top:8px;"><span class="pill">app: '+(req.app||'pick below')+'</span>'+
-      '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+extraPills+'</div>'+
+      '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+
+      '<span class="pill">encrypted key: '+(req.ealg||'RSA-OAEP-SHA256')+'</span>'+extraPills+'</div>'+
       '<label>Machine fingerprint</label><div class="out">'+req.fp+'</div>');
     window._req = req;
   }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
@@ -123,7 +149,9 @@ async function generate(){
   try{
     if(!window._req || !window._req.fp) throw new Error('Read a valid request first (step 1).');
     const keyStr = document.getElementById('key').value.trim();
-    if(!keyStr) throw new Error('Enter the application secret key (step 3).');
+    if(!keyStr) throw new Error('Enter the application signing key (step 3).');
+    const modelKeyStr = normalizeModelKey(document.getElementById('modelKey').value);
+    if(!modelKeyStr) throw new Error('Enter the model/decrypt key (step 3).');
     const app = document.getElementById('app').value;
     const expStr = document.getElementById('exp').value;
     if(!expStr) throw new Error('Set an expiration date.');
@@ -138,10 +166,9 @@ async function generate(){
     }
     // Advanced Intelligence: carry the instance + model identity from the request into the token
     ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
-    // Model master key delivered to the app via the token. This is the EXACT value the
-    // model-key derivation used before the no-keys change, so existing encrypted models
-    // (.enc engine packages and .pt checkpoints) decrypt without re-encryption.
-    payload.mk = 'D@I-@-N3w-W@y::model-addons-v1';
+    // The model key is encrypted to this customer's machine key before it is signed.
+    // The activation code no longer contains a readable mk value.
+    payload.emk = await encryptModelKey(window._req.ek, modelKeyStr);
     const payloadB64 = jsonToB64url(payload);
     const sig = await ed25519Sign(keyStr, payloadB64);
     const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(sig);
