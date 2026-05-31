@@ -11,6 +11,7 @@
   verifies with the same embedded key. Runs entirely in the browser; no key is stored.
 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -88,10 +89,12 @@ function jsonToB64url(o){ return bytesToB64url(strToBytes(JSON.stringify(o))); }
 function b64urlToJson(s){ return JSON.parse(new TextDecoder().decode(b64ToBytes(s))); }
 function setHTML(id,html){ document.getElementById(id).innerHTML = html; }
 
-async function hmacSha256(keyStr, msgStr){
-  const k = await crypto.subtle.importKey('raw', strToBytes(keyStr), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', k, strToBytes(msgStr));
-  return new Uint8Array(sig);
+// Sign with Ed25519. The private key is derived from the password (seed = SHA-256(password)),
+// so the secret never leaves this tool; the apps verify with only the matching public key.
+async function ed25519Sign(keyStr, msgStr){
+  const seed = new Uint8Array(await crypto.subtle.digest('SHA-256', strToBytes(keyStr)));
+  const kp = nacl.sign.keyPair.fromSeed(seed);
+  return nacl.sign.detached(strToBytes(msgStr), kp.secretKey);  // 64-byte signature
 }
 
 function parseRequest(){
@@ -134,7 +137,7 @@ async function generate(){
     // Advanced Intelligence: carry the instance + model identity from the request into the token
     ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
     const payloadB64 = jsonToB64url(payload);
-    const mac = await hmacSha256(keyStr, payloadB64);
+    const mac = await ed25519Sign(keyStr, payloadB64);
     const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(mac);
 
     setHTML('genOut',
