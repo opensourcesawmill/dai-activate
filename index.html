@@ -7,10 +7,12 @@
 <!--
   Vendor activation tool for the DAI suite (Automation / Advanced / Asset Intelligence).
   Paste a customer's activation request, set the entitlement, enter the application's
-  secret key, and it produces an activation key (HMAC-SHA256) to send back. The app
-  verifies with the same embedded key. Runs entirely in the browser; no key is stored.
+  secret signing password, and it produces an Ed25519-signed activation key to send back.
+  The app verifies with the matching public key (no secret in the app). Runs entirely in
+  the browser; nothing is stored.
 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -88,10 +90,13 @@ function jsonToB64url(o){ return bytesToB64url(strToBytes(JSON.stringify(o))); }
 function b64urlToJson(s){ return JSON.parse(new TextDecoder().decode(b64ToBytes(s))); }
 function setHTML(id,html){ document.getElementById(id).innerHTML = html; }
 
-async function hmacSha256(keyStr, msgStr){
-  const k = await crypto.subtle.importKey('raw', strToBytes(keyStr), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', k, strToBytes(msgStr));
-  return new Uint8Array(sig);
+// Sign the payload with the Ed25519 private key derived from the per-app signing
+// password (seed = SHA-256(password)). The deployed app verifies with the matching public
+// key in ACTIVATION_PUBLIC_KEYS — no secret is ever stored in the shipped app.
+async function ed25519Sign(passwordStr, msgStr){
+  const seedBuf = await crypto.subtle.digest('SHA-256', strToBytes(passwordStr));
+  const kp = nacl.sign.keyPair.fromSeed(new Uint8Array(seedBuf));
+  return nacl.sign.detached(strToBytes(msgStr), kp.secretKey);
 }
 
 function parseRequest(){
@@ -133,9 +138,13 @@ async function generate(){
     }
     // Advanced Intelligence: carry the instance + model identity from the request into the token
     ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
+    // Model master key delivered to the app via the token. This is the EXACT value the
+    // model-key derivation used before the no-keys change, so existing encrypted models
+    // (.enc engine packages and .pt checkpoints) decrypt without re-encryption.
+    payload.mk = 'D@I-@-N3w-W@y::model-addons-v1';
     const payloadB64 = jsonToB64url(payload);
-    const mac = await hmacSha256(keyStr, payloadB64);
-    const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(mac);
+    const sig = await ed25519Sign(keyStr, payloadB64);
+    const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(sig);
 
     setHTML('genOut',
       '<div class="ok" style="margin-top:10px;">Activation key — send this to the customer:</div>'+
