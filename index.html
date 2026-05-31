@@ -95,9 +95,11 @@ async function hmacSha256(keyStr, msgStr){
 
 function parseRequest(){
   try{
-    let raw = document.getElementById('reqInput').value.trim();
-    if(!raw.startsWith('DAI-REQ-v1.')) throw new Error('Not a DAI-REQ-v1 request code.');
-    const req = b64urlToJson(raw.slice('DAI-REQ-v1.'.length));
+    const raw = document.getElementById('reqInput').value;
+    const marker = 'DAI-REQ-v1.';
+    const idx = raw.indexOf(marker);
+    if(idx < 0) throw new Error('No DAI-REQ-v1 request code found in what you pasted.');
+    const req = b64urlToJson(raw.slice(idx + marker.length).trim());
     if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
     if(req.app) document.getElementById('app').value = req.app;
     setHTML('reqInfo',
