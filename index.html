@@ -39,7 +39,7 @@
 <div class="wrap">
   <h1>DAI Activation — Vendor Tool</h1>
   <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and send back the activation key. Runs entirely in your browser.</div>
-  <div class="sub">Version: emk2 · 2026-05-31 09:44 PT</div>
+  <div class="sub">Version: emk3 · 2026-05-31 10:00 PT</div>
 
   <div class="card">
     <h2>1 · Paste the customer's request</h2>
@@ -73,11 +73,9 @@
 
   <div class="card">
     <h2>3 · Secret key → generate</h2>
-    <label>Signing key for the selected application. Never stored or sent.</label>
+    <label>Secret key for the selected application. Never stored or sent.</label>
     <div id="keyHint" class="muted" style="margin:0 0 6px;"></div>
     <input id="key" type="text" placeholder="paste the application's secret key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
-    <label>Model/decrypt key. Use the Advanced Intelligence key; base or full key is accepted.</label>
-    <input id="modelKey" type="text" placeholder="paste the Advanced Intelligence/model key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
     <button onclick="generate()">Generate activation key</button>
     <div id="genOut"></div>
     <div style="text-align:center;"><div id="qrout" style="display:none;"></div></div>
@@ -149,9 +147,8 @@ async function generate(){
   try{
     if(!window._req || !window._req.fp) throw new Error('Read a valid request first (step 1).');
     const keyStr = document.getElementById('key').value.trim();
-    if(!keyStr) throw new Error('Enter the application signing key (step 3).');
-    const modelKeyStr = normalizeModelKey(document.getElementById('modelKey').value);
-    if(!modelKeyStr) throw new Error('Enter the model/decrypt key (step 3).');
+    if(!keyStr) throw new Error('Enter the application secret key (step 3).');
+    const modelKeyStr = normalizeModelKey(keyStr);
     const app = document.getElementById('app').value;
     const expStr = document.getElementById('exp').value;
     if(!expStr) throw new Error('Set an expiration date.');
