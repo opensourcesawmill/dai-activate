@@ -102,9 +102,12 @@ function parseRequest(){
     const req = b64urlToJson(raw.slice(idx + marker.length).trim());
     if(!req.fp) throw new Error('Request is missing the hardware fingerprint.');
     if(req.app) document.getElementById('app').value = req.app;
+    let extraPills = '';
+    if(req.inst !== undefined) extraPills += '<span class="pill">instance: '+req.inst+'</span>';
+    if(req.mid) extraPills += '<span class="pill">model: '+req.mid+' v'+(req.ver||'?')+'</span>';
     setHTML('reqInfo',
       '<div style="margin-top:8px;"><span class="pill">app: '+(req.app||'pick below')+'</span>'+
-      '<span class="pill">nonce: '+(req.nonce||'?')+'</span></div>'+
+      '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+extraPills+'</div>'+
       '<label>Machine fingerprint</label><div class="out">'+req.fp+'</div>');
     window._req = req;
   }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
@@ -127,6 +130,8 @@ async function generate(){
       if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
       payload.cams = cams;
     }
+    // Advanced Intelligence: carry the instance + model identity from the request into the token
+    ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
     const payloadB64 = jsonToB64url(payload);
     const mac = await hmacSha256(keyStr, payloadB64);
     const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(mac);
