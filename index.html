@@ -71,6 +71,7 @@
   <div class="card">
     <h2>3 · Secret key → generate</h2>
     <label>Secret key for the selected application. Never stored or sent.</label>
+    <div id="keyHint" class="muted" style="margin:0 0 6px;"></div>
     <input id="key" type="text" placeholder="paste the application's secret key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
     <button onclick="generate()">Generate activation key</button>
     <div id="genOut"></div>
@@ -163,8 +164,11 @@ function copyCode(btn){
 
 // Cameras apply to Automation (DAI) only; hide the field for the other apps.
 function onAppChange(){
-  const isDAI = document.getElementById('app').value === 'DAI';
-  document.getElementById('camsField').style.display = isDAI ? '' : 'none';
+  const app = document.getElementById('app').value;
+  document.getElementById('camsField').style.display = (app === 'DAI') ? '' : 'none';
+  const names = { DAI: 'Automation Intelligence', DAdI: 'Advanced Intelligence', DAsI: 'Asset Intelligence' };
+  const hint = document.getElementById('keyHint');
+  if(hint) hint.textContent = 'Use the ' + (names[app] || app) + ' key.';
 }
 
 // If opened from an in-app QR/link (…?req=DAI-REQ-v1.…), auto-fill and read the request.
