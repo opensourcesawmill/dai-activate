@@ -51,13 +51,13 @@
     <div class="row">
       <div>
         <label>Application</label>
-        <select id="app">
+        <select id="app" onchange="onAppChange()">
           <option value="DAI">Automation Intelligence (DAI)</option>
           <option value="DAdI">Advanced Intelligence (DAdI)</option>
           <option value="DAsI">Asset Intelligence (DAsI)</option>
         </select>
       </div>
-      <div>
+      <div id="camsField">
         <label>Cameras (0–9)</label>
         <input id="cams" type="number" min="0" max="9" value="1" />
       </div>
@@ -115,21 +115,18 @@ async function generate(){
     if(!window._req || !window._req.fp) throw new Error('Read a valid request first (step 1).');
     const keyStr = document.getElementById('key').value.trim();
     if(!keyStr) throw new Error('Enter the application secret key (step 3).');
-    const cams = parseInt(document.getElementById('cams').value,10);
-    if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
+    const app = document.getElementById('app').value;
     const expStr = document.getElementById('exp').value;
     if(!expStr) throw new Error('Set an expiration date.');
     const [y,m,d] = expStr.split('-').map(n=>parseInt(n,10));
     const tidBytes = new Uint8Array(8); crypto.getRandomValues(tidBytes);
 
-    const payload = {
-      v:1,
-      app: document.getElementById('app').value,
-      fp: window._req.fp,
-      cams: cams,
-      exp: [y,m,d],
-      tid: bytesToB64url(tidBytes)
-    };
+    const payload = { v:1, app: app, fp: window._req.fp, exp: [y,m,d], tid: bytesToB64url(tidBytes) };
+    if(app === 'DAI'){
+      const cams = parseInt(document.getElementById('cams').value,10);
+      if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
+      payload.cams = cams;
+    }
     const payloadB64 = jsonToB64url(payload);
     const mac = await hmacSha256(keyStr, payloadB64);
     const code = 'DAI-ACT-v1.'+payloadB64+'.'+bytesToB64url(mac);
@@ -158,6 +155,21 @@ function copyCode(btn){
     try{ document.execCommand('copy'); flash(); }catch(_){}
   }
 }
+
+// Cameras apply to Automation (DAI) only; hide the field for the other apps.
+function onAppChange(){
+  const isDAI = document.getElementById('app').value === 'DAI';
+  document.getElementById('camsField').style.display = isDAI ? '' : 'none';
+}
+
+// If opened from an in-app QR/link (…?req=DAI-REQ-v1.…), auto-fill and read the request.
+(function(){
+  try{
+    const r = new URLSearchParams(location.search).get('req');
+    if(r){ document.getElementById('reqInput').value = r; parseRequest(); }
+  }catch(_){}
+  onAppChange();
+})();
 </script>
 </body>
 </html>
