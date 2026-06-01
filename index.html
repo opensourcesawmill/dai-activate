@@ -80,6 +80,15 @@
     <div id="genOut"></div>
     <div style="text-align:center;"><div id="qrout" style="display:none;"></div></div>
   </div>
+
+  <div class="card">
+    <h2>4 · Save to cloud (optional)</h2>
+    <div id="cloudStatus" class="muted">After you generate a key above, name it and save so the customer's app can fetch it.</div>
+    <label>Name this activation (optional)</label>
+    <input id="actName" type="text" placeholder="e.g. Acme Corp – 4 cam" autocomplete="off" />
+    <button id="saveCloudBtn" onclick="saveToCloud()" disabled>Save activation to cloud</button>
+    <div id="cloudOut"></div>
+  </div>
 </div>
 
 <script>
@@ -171,6 +180,8 @@ async function generate(){
     const payloadB64 = jsonToB64url(payload);
     const sig = await ed25519Sign(keyStr, payloadB64);
     const code = 'DAI-ACT-v2.'+payloadB64+'.'+bytesToB64url(sig);
+    _lastCode = code;
+    { const sbtn = document.getElementById('saveCloudBtn'); if(sbtn) sbtn.disabled = false; }
 
     setHTML('genOut',
       '<div class="ok" style="margin-top:10px;">Activation key — send this to the customer:</div>'+
@@ -204,6 +215,50 @@ function onAppChange(){
   const names = { DAI: 'Automation Intelligence', DAdI: 'Advanced Intelligence', DAsI: 'Asset Intelligence' };
   const hint = document.getElementById('keyHint');
   if(hint) hint.textContent = 'Use the ' + (names[app] || app) + ' key.';
+}
+
+// --- Save the generated key to the cloud store (a Google Apps Script web app that writes
+// to a Drive folder). The page calls it via JSONP (a <script> tag) to avoid cross-site
+// limits; the DAI apps later read the key back by their machine fingerprint. ---
+const STORE_URL = 'https://script.google.com/macros/s/AKfycbwCw_kXz6yPJje-2H7QVPYPyvL0lc7NARCQEUv2nBcjOyp2bMUHQtVLwJ1-URbcY9uC/exec';
+const STORE_SECRET = 'D@I-@-B3tt3r-N3w-Sm@rt3r-W@y';
+let _lastCode = null;
+
+function jsonp(params, timeoutMs){
+  return new Promise(function(resolve, reject){
+    const cb = 'cb_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    let done = false;
+    const cleanup = function(){ try{ delete window[cb]; }catch(_){ window[cb] = undefined; } if(script.parentNode) script.parentNode.removeChild(script); };
+    const timer = setTimeout(function(){ if(!done){ done = true; cleanup(); reject(new Error('timed out')); } }, timeoutMs || 20000);
+    window[cb] = function(data){ if(done) return; done = true; clearTimeout(timer); cleanup(); resolve(data); };
+    script.onerror = function(){ if(done) return; done = true; clearTimeout(timer); cleanup(); reject(new Error('network error')); };
+    script.src = STORE_URL + '?' + params + '&callback=' + cb;
+    document.body.appendChild(script);
+  });
+}
+
+async function saveToCloud(){
+  if(!_lastCode || !window._req){ setHTML('cloudOut','<div class="err">Generate an activation key first (step 3).</div>'); return; }
+  const fp = window._req.fp;
+  if(!fp){ setHTML('cloudOut','<div class="err">This request has no fingerprint — the customer must regenerate it from an updated app.</div>'); return; }
+  const app = document.getElementById('app').value;
+  let exp = '';
+  try{ exp = JSON.stringify(b64urlToJson(_lastCode.split('.')[1]).exp); }catch(_){}
+  const name = (document.getElementById('actName').value||'').trim() || 'Activation';
+  const params = 'action=save'
+    + '&app=' + encodeURIComponent(app)
+    + '&fp=' + encodeURIComponent(fp)
+    + '&name=' + encodeURIComponent(name)
+    + '&exp=' + encodeURIComponent(exp)
+    + '&code=' + encodeURIComponent(_lastCode)
+    + '&secret=' + encodeURIComponent(STORE_SECRET);
+  setHTML('cloudOut','<div class="muted">Saving…</div>');
+  try{
+    const res = await jsonp(params);
+    if(res && res.ok){ setHTML('cloudOut','<div class="ok">Saved to cloud. The customer can now tap “Activate from web” in their app.</div>'); }
+    else { setHTML('cloudOut','<div class="err">Save failed: '+((res&&res.error)||'unknown error')+'</div>'); }
+  }catch(e){ setHTML('cloudOut','<div class="err">Save failed: '+(e.message||e)+'</div>'); }
 }
 
 // If opened from an in-app QR/link (…?req=DAI-REQ-v2.…), auto-fill and read the request.
