@@ -83,9 +83,7 @@
 
   <div class="card">
     <h2>4 · Save to cloud (optional)</h2>
-    <div id="cloudStatus" class="muted">After you generate a key above, name it and save so the customer's app can fetch it.</div>
-    <label>Name this activation (optional)</label>
-    <input id="actName" type="text" placeholder="e.g. Acme Corp – 4 cam" autocomplete="off" />
+    <div id="cloudStatus" class="muted">After you generate a key above, click Save so the customer's app can fetch it.</div>
     <button id="saveCloudBtn" onclick="saveToCloud()" disabled>Save activation to cloud</button>
     <div id="cloudOut"></div>
   </div>
@@ -245,7 +243,7 @@ async function saveToCloud(){
   const app = document.getElementById('app').value;
   let exp = '';
   try{ exp = JSON.stringify(b64urlToJson(_lastCode.split('.')[1]).exp); }catch(_){}
-  const name = (document.getElementById('actName').value||'').trim() || 'Activation';
+  const name = app + ' · ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const params = 'action=save'
     + '&app=' + encodeURIComponent(app)
     + '&fp=' + encodeURIComponent(fp)
