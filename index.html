@@ -4,6 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DAI Activation — Vendor Tool</title>
+<!--
+  Vendor activation tool for the DAI suite (Automation / Advanced / Asset Intelligence).
+  Paste a customer's activation request, set the entitlement, enter the application's
+  secret signing password, and it produces an Ed25519-signed activation key to send back.
+  The app verifies with the matching public key (no secret in the app). Runs entirely in
+  the browser; nothing is stored.
+-->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
 <style>
@@ -31,12 +38,12 @@
 <body>
 <div class="wrap">
   <h1>DAI Activation — Vendor Tool</h1>
-  <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and generate a signed activation.</div>
-  <div class="sub">Version: emk5 · verified cloud handoff · 2026-06-01</div>
+  <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and send back the activation key. Runs entirely in your browser.</div>
+  <div class="sub">Version: emk5 · 2026-06-03 09:55 PT</div>
 
   <div class="card">
     <h2>1 · Paste the customer's request</h2>
-    <label>The <span class="muted">DAI-REQ-v2.…</span> code from the customer's QR:</label>
+    <label>The <span class="muted">DAI-REQ-v2.…</span> code (from the QR they sent):</label>
     <textarea id="reqInput" placeholder="DAI-REQ-v2.…"></textarea>
     <button class="secondary" onclick="parseRequest()">Read request</button>
     <div id="reqInfo"></div>
@@ -65,19 +72,21 @@
   </div>
 
   <div class="card">
-    <h2>3 · Secret key → generate, save, verify</h2>
+    <h2>3 · Secret key → generate</h2>
     <label>Secret key for the selected application. Never stored or sent.</label>
     <div id="keyHint" class="muted" style="margin:0 0 6px;"></div>
     <input id="key" type="text" placeholder="paste the application's secret key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
-    <button onclick="generate()">Generate activation</button>
+    <button onclick="generate()">Generate activation key</button>
     <div id="genOut"></div>
     <div style="text-align:center;"><div id="qrout" style="display:none;"></div></div>
   </div>
 
   <div class="card">
-    <h2>4 · Cloud handoff</h2>
-    <div id="cloudStatus" class="muted">This page saves the activation, reads it back, and only reports success after verification.</div>
-    <button id="saveCloudBtn" onclick="saveToCloud()" disabled>Retry save + verify</button>
+    <h2>4 · Deliver activation</h2>
+    <div id="cloudStatus" class="muted">After you generate a key above, save to cloud, download a JSON file, or email the activation code.</div>
+    <button id="saveCloudBtn" onclick="saveToCloud()" disabled>Save activation to cloud</button>
+    <button id="downloadFileBtn" class="secondary" onclick="downloadActivationFile()" disabled>Download activation JSON</button>
+    <button id="emailCodeBtn" class="secondary" onclick="emailActivationCode()" disabled>Email activation code</button>
     <div id="cloudOut"></div>
   </div>
 </div>
@@ -95,10 +104,10 @@ function normalizeModelKey(s){
   if(!key) return '';
   return key.indexOf('::') >= 0 ? key : key + '::model-addons-v1';
 }
-function activationFingerprint(req){
-  return (req && typeof req.fp === 'string') ? req.fp.trim() : '';
-}
 
+// Sign the payload with the Ed25519 private key derived from the per-app signing
+// password (seed = SHA-256(password)). The deployed app verifies with the matching public
+// key in ACTIVATION_PUBLIC_KEYS — no secret is ever stored in the shipped app.
 async function ed25519Sign(passwordStr, msgStr){
   const seedBuf = await crypto.subtle.digest('SHA-256', strToBytes(passwordStr));
   const kp = nacl.sign.keyPair.fromSeed(new Uint8Array(seedBuf));
@@ -131,7 +140,6 @@ function parseRequest(){
     if(req.v !== 2) throw new Error('Request is from an old licensing version.');
     if(!req.hw || req.hw.hwv !== 3) throw new Error('Request is missing the v3 hardware binding.');
     if(!req.ek) throw new Error('Request is missing the encryption key. Generate a fresh activation request from the customer app.');
-    if(!activationFingerprint(req)) throw new Error('Request is missing the machine fingerprint. Generate a fresh activation request from the customer app.');
     if(req.app) document.getElementById('app').value = req.app;
     let extraPills = '';
     if(req.inst !== undefined) extraPills += '<span class="pill">instance: '+req.inst+'</span>';
@@ -139,20 +147,16 @@ function parseRequest(){
     setHTML('reqInfo',
       '<div style="margin-top:8px;"><span class="pill">app: '+(req.app||'pick below')+'</span>'+
       '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+
-      '<span class="pill">fp: '+activationFingerprint(req).slice(0,12)+'…</span>'+
       '<span class="pill">hardware: v'+req.hw.hwv+'</span>'+
       '<span class="pill">encrypted key: '+(req.ealg||'RSA-OAEP-SHA256')+'</span>'+extraPills+'</div>'+
       '<label>Hardware binding</label><div class="out">'+JSON.stringify(req.hw)+'</div>');
     window._req = req;
-    onAppChange();
   }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
 }
 
 async function generate(){
   try{
     if(!window._req || !window._req.hw) throw new Error('Read a valid request first (step 1).');
-    const fp = activationFingerprint(window._req);
-    if(!fp) throw new Error('This request has no fingerprint — the customer must regenerate it from an updated app.');
     const keyStr = document.getElementById('key').value.trim();
     if(!keyStr) throw new Error('Enter the application secret key (step 3).');
     const modelKeyStr = normalizeModelKey(keyStr);
@@ -162,31 +166,35 @@ async function generate(){
     const [y,m,d] = expStr.split('-').map(n=>parseInt(n,10));
     const tidBytes = new Uint8Array(8); crypto.getRandomValues(tidBytes);
 
-    const payload = { v:2, app: app, hw: window._req.hw, fp: fp, exp: [y,m,d], tid: bytesToB64url(tidBytes) };
-    if(window._req.nonce) payload.nonce = window._req.nonce;
+    const payload = { v:2, app: app, hw: window._req.hw, exp: [y,m,d], tid: bytesToB64url(tidBytes) };
     if(app === 'DAI'){
       const cams = parseInt(document.getElementById('cams').value,10);
       if(isNaN(cams)||cams<0||cams>9) throw new Error('Cameras must be 0–9.');
       payload.cams = cams;
     }
+    // Advanced Intelligence: carry the instance + model identity from the request into the token
     ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
+    // The model key is encrypted to this customer's machine key before it is signed.
+    // The activation code no longer contains a readable mk value.
     payload.emk = await encryptModelKey(window._req.ek, modelKeyStr);
     const payloadB64 = jsonToB64url(payload);
     const sig = await ed25519Sign(keyStr, payloadB64);
     const code = 'DAI-ACT-v2.'+payloadB64+'.'+bytesToB64url(sig);
     _lastCode = code;
     { const sbtn = document.getElementById('saveCloudBtn'); if(sbtn) sbtn.disabled = false; }
+    { const dbtn = document.getElementById('downloadFileBtn'); if(dbtn) dbtn.disabled = false; }
+    { const ebtn = document.getElementById('emailCodeBtn'); if(ebtn) ebtn.disabled = false; }
 
     setHTML('genOut',
-      '<div class="ok" style="margin-top:10px;">Activation key generated:</div>'+
+      '<div class="ok" style="margin-top:10px;">Activation key — send this to the customer:</div>'+
       '<textarea id="actCode" readonly onclick="this.select()" style="margin-top:6px;min-height:80px;">'+code+'</textarea>'+
       '<button class="secondary" onclick="copyCode(this)">Copy code</button>');
+    // QR is a convenience; if the QR library failed to load, the code above still stands.
     try{
       const qel = document.getElementById('qrout');
       qel.style.display='inline-block'; qel.innerHTML='';
       new QRCode(qel, { text: code, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
     }catch(_){ document.getElementById('qrout').style.display='none'; }
-    await saveToCloud();
   }catch(e){ setHTML('genOut','<div class="err" style="margin-top:10px;">'+e.message+'</div>'); document.getElementById('qrout').style.display='none'; }
 }
 
@@ -202,6 +210,7 @@ function copyCode(btn){
   }
 }
 
+// Cameras apply to Automation (DAI) only; hide the field for the other apps.
 function onAppChange(){
   const app = document.getElementById('app').value;
   document.getElementById('camsField').style.display = (app === 'DAI') ? '' : 'none';
@@ -210,9 +219,13 @@ function onAppChange(){
   if(hint) hint.textContent = 'Use the ' + (names[app] || app) + ' key.';
 }
 
+// --- Save the generated key to the cloud store (a Google Apps Script web app that writes
+// to a Drive folder). The page calls it via JSONP (a <script> tag) to avoid cross-site
+// limits; the DAI apps later read the key back by their machine fingerprint. ---
 const STORE_URL = 'https://script.google.com/macros/s/AKfycbwCw_kXz6yPJje-2H7QVPYPyvL0lc7NARCQEUv2nBcjOyp2bMUHQtVLwJ1-URbcY9uC/exec';
-const STORE_SECRET = String.fromCharCode(68,64,73,45,64,45,66,51,116,116,51,114,45,78,51,119,45,83,109,64,114,116,51,114,45,87,64,121);
+const STORE_SECRET = 'D@I-@-B3tt3r-N3w-Sm@rt3r-W@y';
 let _lastCode = null;
+let _lastActivationName = '';
 
 function jsonp(params, timeoutMs){
   return new Promise(function(resolve, reject){
@@ -228,22 +241,15 @@ function jsonp(params, timeoutMs){
   });
 }
 
-async function getCloudActivations(app, fp){
-  const params = 'action=get'
-    + '&app=' + encodeURIComponent(app)
-    + '&fp=' + encodeURIComponent(fp);
-  const res = await jsonp(params, 20000);
-  return res && Array.isArray(res.activations) ? res.activations : [];
-}
-
 async function saveToCloud(){
-  if(!_lastCode || !window._req){ setHTML('cloudOut','<div class="err">Generate an activation key first.</div>'); return; }
-  const fp = activationFingerprint(window._req);
+  if(!_lastCode || !window._req){ setHTML('cloudOut','<div class="err">Generate an activation key first (step 3).</div>'); return; }
+  const fp = window._req.fp;
   if(!fp){ setHTML('cloudOut','<div class="err">This request has no fingerprint — the customer must regenerate it from an updated app.</div>'); return; }
   const app = document.getElementById('app').value;
   let exp = '';
   try{ exp = JSON.stringify(b64urlToJson(_lastCode.split('.')[1]).exp); }catch(_){}
-  const name = app + ' · ' + fp.slice(0,12) + ' · ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const name = activationName(app);
+  _lastActivationName = name;
   const params = 'action=save'
     + '&app=' + encodeURIComponent(app)
     + '&fp=' + encodeURIComponent(fp)
@@ -251,37 +257,80 @@ async function saveToCloud(){
     + '&exp=' + encodeURIComponent(exp)
     + '&code=' + encodeURIComponent(_lastCode)
     + '&secret=' + encodeURIComponent(STORE_SECRET);
-
-  setHTML('cloudOut','<div class="muted">Saving and verifying activation for fp '+fp.slice(0,12)+'…</div>');
-
-  let lastError = '';
-  for(let attempt = 1; attempt <= 3; attempt++){
-    try{
-      const saveResult = await jsonp(params, 25000);
-      if(!(saveResult && saveResult.ok)){
-        throw new Error((saveResult && saveResult.error) || 'save failed');
-      }
-
-      await new Promise(resolve => setTimeout(resolve, attempt * 900));
-
-      const activations = await getCloudActivations(app, fp);
-      const found = activations.some(function(a){ return a && a.code === _lastCode; });
-
-      if(found){
-        setHTML('cloudOut','<div class="ok">Saved and VERIFIED. Customer can click “Activate from Web”.</div>');
-        return;
-      }
-
-      throw new Error('saved, but readback did not contain this activation');
-    }catch(e){
-      lastError = e && e.message ? e.message : String(e);
-      setHTML('cloudOut','<div class="muted">Attempt '+attempt+' failed: '+lastError+'</div>');
-    }
-  }
-
-  setHTML('cloudOut','<div class="err">Cloud save could not be verified after 3 tries: '+lastError+'</div>');
+  setHTML('cloudOut','<div class="muted">Saving…</div>');
+  try{
+    const res = await jsonp(params);
+    if(res && res.ok){ setHTML('cloudOut','<div class="ok">Saved to cloud. The customer can now tap “Activate from web” in their app.</div>'); }
+    else { setHTML('cloudOut','<div class="err">Save failed: '+((res&&res.error)||'unknown error')+'</div>'); }
+  }catch(e){ setHTML('cloudOut','<div class="err">Save failed: '+(e.message||e)+'</div>'); }
 }
 
+function activationName(app){
+  const fp = (window._req && window._req.fp) || 'unknown';
+  return app + ' · ' + fp.slice(0,12) + ' · ' + new Date().toISOString().slice(0,16).replace('T',' ');
+}
+
+function activationRecord(){
+  if(!_lastCode || !window._req) throw new Error('Generate an activation key first.');
+  const app = document.getElementById('app').value;
+  const fp = window._req.fp;
+  if(!fp) throw new Error('This request has no fingerprint.');
+  let exp = null;
+  try{ exp = b64urlToJson(_lastCode.split('.')[1]).exp || null; }catch(_){}
+  const name = _lastActivationName || activationName(app);
+  return {
+    fileName: app + '_' + fp + '.json',
+    data: {
+      v: 1,
+      app: app,
+      fingerprint: fp,
+      activations: [{
+        name: name,
+        exp: exp,
+        created: new Date().toISOString().slice(0,10),
+        code: _lastCode
+      }]
+    }
+  };
+}
+
+function downloadActivationFile(){
+  try{
+    const record = activationRecord();
+    const blob = new Blob([JSON.stringify(record.data, null, 2) + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = record.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 500);
+    setHTML('cloudOut','<div class="ok">Downloaded '+record.fileName+'.</div>');
+  }catch(e){
+    setHTML('cloudOut','<div class="err">Download failed: '+(e.message||e)+'</div>');
+  }
+}
+
+function emailActivationCode(){
+  try{
+    const record = activationRecord();
+    const subject = 'DAI activation code - ' + record.data.app + ' - ' + record.data.fingerprint.slice(0,12);
+    const body = [
+      'Paste this activation code into the customer app activation dialog:',
+      '',
+      _lastCode,
+      '',
+      'Activation JSON filename:',
+      record.fileName
+    ].join('\n');
+    location.href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }catch(e){
+    setHTML('cloudOut','<div class="err">Email failed: '+(e.message||e)+'</div>');
+  }
+}
+
+// If opened from an in-app QR/link (…?req=DAI-REQ-v2.…), auto-fill and read the request.
 (function(){
   try{
     const r = new URLSearchParams(location.search).get('req');
