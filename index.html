@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DAI Activation — Vendor Tool</title>
 <!--
-  Vendor activation tool for the DAI suite (Automation / Advanced / Asset / Appearance).
+  Vendor activation tool for the DAI suite (Automation / Advanced / Asset Intelligence).
   Paste a customer's activation request, set the entitlement, enter the application's
   secret signing password, and it produces an Ed25519-signed activation key to send back.
   The app verifies with the matching public key (no secret in the app). Runs entirely in
@@ -39,7 +39,7 @@
 <div class="wrap">
   <h1>DAI Activation — Vendor Tool</h1>
   <div class="sub">Paste the customer's request, set the entitlement, enter the application's secret key, and send back the activation key. Runs entirely in your browser.</div>
-  <div class="sub">Version: emk6 · 2026-10-26 · Appearance Runtime activation</div>
+  <div class="sub">Version: emk5 · 2026-06-03 09:55 PT</div>
 
   <div class="card">
     <h2>1 · Paste the customer's request</h2>
@@ -58,7 +58,6 @@
           <option value="DAI">Automation Intelligence (DAI)</option>
           <option value="DAdI">Advanced Intelligence (DAdI)</option>
           <option value="DAsI">Asset Intelligence (DAsI)</option>
-          <option value="DApI">Appearance Intelligence Runtime (DApI)</option>
         </select>
       </div>
       <div id="camsField">
@@ -140,7 +139,7 @@ function parseRequest(){
     const req = b64urlToJson(raw.slice(idx + marker.length).trim());
     if(req.v !== 2) throw new Error('Request is from an old licensing version.');
     if(!req.hw || req.hw.hwv !== 3) throw new Error('Request is missing the v3 hardware binding.');
-    if(req.app !== 'DApI' && !req.ek) throw new Error('Request is missing the encryption key. Generate a fresh activation request from the customer app.');
+    if(!req.ek) throw new Error('Request is missing the encryption key. Generate a fresh activation request from the customer app.');
     if(req.app) document.getElementById('app').value = req.app;
     let extraPills = '';
     if(req.inst !== undefined) extraPills += '<span class="pill">instance: '+req.inst+'</span>';
@@ -149,10 +148,9 @@ function parseRequest(){
       '<div style="margin-top:8px;"><span class="pill">app: '+(req.app||'pick below')+'</span>'+
       '<span class="pill">nonce: '+(req.nonce||'?')+'</span>'+
       '<span class="pill">hardware: v'+req.hw.hwv+'</span>'+
-      '<span class="pill">'+(req.app === 'DApI' ? 'whole Runtime app' : 'encrypted key: '+(req.ealg||'RSA-OAEP-SHA256'))+'</span>'+extraPills+'</div>'+
+      '<span class="pill">encrypted key: '+(req.ealg||'RSA-OAEP-SHA256')+'</span>'+extraPills+'</div>'+
       '<label>Hardware binding</label><div class="out">'+JSON.stringify(req.hw)+'</div>');
     window._req = req;
-    if(req.app === 'DApI') onAppChange();
   }catch(e){ setHTML('reqInfo','<div class="err" style="margin-top:8px;">'+e.message+'</div>'); }
 }
 
@@ -178,8 +176,7 @@ async function generate(){
     ['inst','mid','ver'].forEach(function(k){ if(window._req[k]!==undefined && window._req[k]!==null) payload[k]=window._req[k]; });
     // The model key is encrypted to this customer's machine key before it is signed.
     // The activation code no longer contains a readable mk value.
-    // Appearance is an app entitlement; never deliver its signing password as a model key.
-    if(app !== 'DApI') payload.emk = await encryptModelKey(window._req.ek, modelKeyStr);
+    payload.emk = await encryptModelKey(window._req.ek, modelKeyStr);
     const payloadB64 = jsonToB64url(payload);
     const sig = await ed25519Sign(keyStr, payloadB64);
     const code = 'DAI-ACT-v2.'+payloadB64+'.'+bytesToB64url(sig);
@@ -217,7 +214,7 @@ function copyCode(btn){
 function onAppChange(){
   const app = document.getElementById('app').value;
   document.getElementById('camsField').style.display = (app === 'DAI') ? '' : 'none';
-  const names = { DAI: 'Automation Intelligence', DAdI: 'Advanced Intelligence', DAsI: 'Asset Intelligence', DApI: 'Appearance Intelligence Runtime' };
+  const names = { DAI: 'Automation Intelligence', DAdI: 'Advanced Intelligence', DAsI: 'Asset Intelligence' };
   const hint = document.getElementById('keyHint');
   if(hint) hint.textContent = 'Use the ' + (names[app] || app) + ' key.';
 }
